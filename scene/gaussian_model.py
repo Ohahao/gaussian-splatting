@@ -30,12 +30,14 @@ except:
 class GaussianModel:
 
     def setup_functions(self):
+        #scaling matrix S, rotation matrix R로 covariance matrix 계산
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
-            L = build_scaling_rotation(scaling_modifier * scaling, rotation)
-            actual_covariance = L @ L.transpose(1, 2)
-            symm = strip_symmetric(actual_covariance)
+            L = build_scaling_rotation(scaling_modifier * scaling, rotation) #scaling matrix와 rotation matrix 입력을 받아 3x3 matrix L(JW) 반환
+            actual_covariance = L @ L.transpose(1, 2) #Σ = L·Lᵀ
+            symm = strip_symmetric(actual_covariance) #covariance matrix는 대칭이므로 대칭 요소만 추출
             return symm
-        
+            
+        #property activation 정의
         self.scaling_activation = torch.exp
         self.scaling_inverse_activation = torch.log
 
@@ -46,17 +48,17 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
-
+#속성 초기화
     def __init__(self, sh_degree, optimizer_type="default"):
         self.active_sh_degree = 0
         self.optimizer_type = optimizer_type
-        self.max_sh_degree = sh_degree  
-        self._xyz = torch.empty(0)
-        self._features_dc = torch.empty(0)
-        self._features_rest = torch.empty(0)
-        self._scaling = torch.empty(0)
-        self._rotation = torch.empty(0)
-        self._opacity = torch.empty(0)
+        self.max_sh_degree = sh_degree  #SH 최대 차수
+        self._xyz = torch.empty(0)    #3D 좌표
+        self._features_dc = torch.empty(0)    #SH 기반 색상 특징
+        self._features_rest = torch.empty(0)    #SH 기반 색상 특징
+        self._scaling = torch.empty(0)    #크기 조정 파라미터
+        self._rotation = torch.empty(0)    #회전 파라미터
+        self._opacity = torch.empty(0)    #불투명도 조정 파라미터
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -99,23 +101,23 @@ class GaussianModel:
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
-    @property
+    @property    #Gaussian 스케일을 지수함수로 복원(학습 파라미터)
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
     
-    @property
+    @property    #회전을 나타내는 쿼터니언 벡터를 normalize
     def get_rotation(self):
         return self.rotation_activation(self._rotation)
     
-    @property
+    @property    #Gaussian 중심 3D 좌표 그대로 반환(학습 파라미터)
     def get_xyz(self):
         return self._xyz
     
-    @property
+    @property    #Sh 기반 색상 정보 반환(features_dc: 0차항 성분, features_rest: 나머지 SH 계수들)
     def get_features(self):
         features_dc = self._features_dc
         features_rest = self._features_rest
-        return torch.cat((features_dc, features_rest), dim=1)
+        return torch.cat((features_dc, features_rest), dim=1)    #채널방향으로 concat해 하나의 feature 벡터
     
     @property
     def get_features_dc(self):
@@ -125,11 +127,11 @@ class GaussianModel:
     def get_features_rest(self):
         return self._features_rest
     
-    @property
+    @property    #불투명도 sigmoid activation 함수 통과시켜 반환
     def get_opacity(self):
-        return self.opacity_activation(self._opacity)
+        return self.opacity_activation(self._opacity)    
     
-    @property
+    @property    #카메라별 노출 보정 행렬 저장
     def get_exposure(self):
         return self._exposure
 
@@ -138,14 +140,15 @@ class GaussianModel:
             return self._exposure[self.exposure_mapping[image_name]]
         else:
             return self.pretrained_exposures[image_name]
-    
+    #covariance matrix 계산
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
-
+            
+    #Point Cloud(input)에서 초기 3D Gaussian 생성
     def create_from_pcd(self, pcd : BasicPointCloud, cam_infos : int, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
