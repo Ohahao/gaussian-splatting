@@ -1,4 +1,4 @@
-#
+# 역할: point cloud 초기화 / 3D Gaussian 속성 최적화 / Gaussian distribution으로부터 scene 구성 및 렌더링 / point density 조정
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
@@ -151,35 +151,38 @@ class GaussianModel:
     #Point Cloud(input)에서 초기 3D Gaussian 생성
     def create_from_pcd(self, pcd : BasicPointCloud, cam_infos : int, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
+        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()    #pcd.points: point cloud 3D 좌표
+        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())    #pcd.colors: point cloud RGB 색상; RGB2SH 통해 SH 0차항 성분으로 변환
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
-        features[:, :3, 0 ] = fused_color
-        features[:, 3:, 1:] = 0.0
+        features[:, :3, 0 ] = fused_color    #RGB 값을 SH의 DC 항(0)에 할당
+        features[:, 3:, 1:] = 0.0    #RGB 이후 나머지는 무효한 슬라이스
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
+        #거리 기반 scale 및 회전 초기화
         dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
 
+        #opacity 초기화(inverse sigmoid)
         opacities = self.inverse_opacity_activation(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
+        #학습 파라미터 설정: 좌표, SH 기반 색상 특징, 크기, 회전, 불투명도
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")    #2D 렌더링용 반지름/화면상 Gaussian의 최대 반지름(렌더링 최적화 시 사용)
         self.exposure_mapping = {cam_info.image_name: idx for idx, cam_info in enumerate(cam_infos)}
         self.pretrained_exposures = None
         exposure = torch.eye(3, 4, device="cuda")[None].repeat(len(cam_infos), 1, 1)
         self._exposure = nn.Parameter(exposure.requires_grad_(True))
 
     def training_setup(self, training_args):
-        self.percent_dense = training_args.percent_dense
+        self.percent_dense = training_args.percent_dense    #densification 비율; 후속 Gaussian 복제 및 생성 시 사용
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
 
@@ -200,7 +203,7 @@ class GaussianModel:
             except:
                 # A special version of the rasterizer is required to enable sparse adam
                 self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-
+        
         self.exposure_optimizer = torch.optim.Adam([self._exposure])
 
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
@@ -238,7 +241,8 @@ class GaussianModel:
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
         return l
-
+        
+    #ply 포맷으로 3D Gaussian 데이터 저장
     def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
 
@@ -262,7 +266,8 @@ class GaussianModel:
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
-
+        
+    #ply 포맷으로 3D Gaussian 데이터 로드
     def load_ply(self, path, use_train_test_exp = False):
         plydata = PlyData.read(path)
         if use_train_test_exp:
@@ -330,7 +335,7 @@ class GaussianModel:
 
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
-
+    #선택된 Gaussian point만 남기고 나머지 제거
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
@@ -348,7 +353,8 @@ class GaussianModel:
                 group["params"][0] = nn.Parameter(group["params"][0][mask].requires_grad_(True))
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
-
+        
+    #불필요한 포인트 제거(최적화)
     def prune_points(self, mask):
         valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
@@ -365,7 +371,7 @@ class GaussianModel:
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
         self.tmp_radii = self.tmp_radii[valid_points_mask]
-
+    #새롭게 생성된 Gaussian point 기존 파라미터에 추가(densification)
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
