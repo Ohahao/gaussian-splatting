@@ -1,4 +1,4 @@
-#
+# 렌더링 준비-실시-출력하는 코드
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
