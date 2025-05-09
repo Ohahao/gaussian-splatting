@@ -1,4 +1,4 @@
-# 역할: point cloud 초기화 / 3D Gaussian 속성 최적화 / Gaussian distribution으로부터 scene 구성 및 렌더링 / point density 조정
+# 역할: point cloud에서 3D Gaussian 추출 / 학습 파라미터 설정 / adpative density control
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
