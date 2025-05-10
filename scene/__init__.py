@@ -1,4 +1,4 @@
-#
+# Scene 정보를 로드, 관리, 저장하는 코드 - train/test scene 설정 초기화, Gaussian 로딩, Gaussian parameter 저장 ... etc
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
@@ -40,6 +40,7 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
+        #scene 정보 선택 - Colmap / Blender
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
@@ -68,18 +69,19 @@ class Scene:
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
+        #해상도 스케일별로 camera list 저장
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, False)
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, True)
-
-        if self.loaded_iter:
+        
+        if self.loaded_iter:    #저장된 Gaussian load
             self.gaussians.load_ply(os.path.join(self.model_path,
                                                            "point_cloud",
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"), args.train_test_exp)
-        else:
+        else:        #새로운 gaussian 생성
             self.gaussians.create_from_pcd(scene_info.point_cloud, scene_info.train_cameras, self.cameras_extent)
 
     def save(self, iteration):
