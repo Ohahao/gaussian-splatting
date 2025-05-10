@@ -94,7 +94,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
-        # Pick a random Camera
+        # Pick a random Camera(랜덤한 view 선택)
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
             viewpoint_indices = list(range(len(viewpoint_stack)))
@@ -128,12 +128,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Depth regularization
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
-            invDepth = render_pkg["depth"]
-            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+            invDepth = render_pkg["depth"]    #invDepth: Gaussian 모델이 렌더링을 통해 추청한 inverse depth map
+            mono_invdepth = viewpoint_cam.invdepthmap.cuda()    #mono_invdepth: GT inverse depth map
             depth_mask = viewpoint_cam.depth_mask.cuda()
 
-            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
-            Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
+            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()    #L1 평균 오차
+            Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure    #학습 iteration에 따라 가중치 적용
             loss += Ll1depth
             Ll1depth = Ll1depth.item()
         else:
