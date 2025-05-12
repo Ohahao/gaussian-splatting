@@ -44,6 +44,8 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
     is_nerf_synthetic: bool
+    train_frames: list = None
+    test_frames: list = None
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -273,6 +275,18 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
 def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"):
 
     depths_folder=os.path.join(path, depths) if depths != "" else ""
+
+    #frame 읽기
+    train_transforms_path = os.path.join(path, "transforms_train.json")
+    with open(train_transforms_path, 'r', encoding='utf-8') as f:
+        train_data = json.load(f)
+    train_frames = train_data.get("frames", [])
+    
+    test_transforms_path = os.path.join(path, "transforms_test.json")
+    with open(test_transforms_path, 'r', encoding='utf-8') as f:
+        test_data = json.load(f)
+    test_frames = test_data.get("frames", [])
+
     print("Reading Training Transforms")
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", depths_folder, white_background, False, extension)
     print("Reading Test Transforms")
@@ -307,6 +321,11 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path,
                            is_nerf_synthetic=True)
+
+    #return 값에 frame 정보 추가
+    scene_info.train_frames = train_frames
+    scene_info.test_frames = test_frames
+
     return scene_info
 
 sceneLoadTypeCallbacks = {
