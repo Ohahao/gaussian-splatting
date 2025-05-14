@@ -37,6 +37,7 @@ class CameraInfo(NamedTuple):
     height: int
     is_test: bool
 
+'''
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
     train_cameras: list
@@ -46,6 +47,17 @@ class SceneInfo(NamedTuple):
     is_nerf_synthetic: bool
     train_frames: list = None
     test_frames: list = None
+'''
+class SceneInfo:
+    def __init__(self, point_cloud, train_cameras, test_cameras, nerf_normalization, ply_path, is_nerf_synthetic):
+        self.point_cloud = point_cloud
+        self.train_cameras = train_cameras
+        self.test_cameras = test_cameras
+        self.nerf_normalization = nerf_normalization
+        self.ply_path = ply_path
+        self.is_nerf_synthetic = is_nerf_synthetic
+        self.train_frames = None
+        self.test_frames = None
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -232,11 +244,17 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
 
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
-        fovx = contents["camera_angle_x"]
+        fovx     = contents.get("camera_angle_x", None)
 
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
-            cam_name = os.path.join(path, frame["file_path"] + extension)
+            file_path = frame["file_path"].lstrip("./")  # 문자열의 처음에 있는 '.' 제거
+            name, ext = os.path.splitext(file_path)
+            if ext == "":
+                file_path = name + extension   
+            else:
+                file_path = os.path.join('images', file_path)
+            cam_name = os.path.join(path, file_path)
 
             # NeRF 'transform_matrix' is a camera-to-world transform
             c2w = np.array(frame["transform_matrix"])
@@ -248,7 +266,7 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
             R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
             T = w2c[:3, 3]
 
-            image_path = os.path.join(path, cam_name)
+            image_path = os.path.join(cam_name)
             image_name = Path(cam_name).stem
             image = Image.open(image_path)
 
@@ -272,29 +290,46 @@ def readCamerasFromTransforms(path, transformsfile, depths_folder, white_backgro
             
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"):
+def readNerfSyntheticInfo(path, white_background, depths, eval, dataset_type, extension=".png"):
 
-    depths_folder=os.path.join(path, depths) if depths != "" else ""
+    if dataset_type == "nerf_synthetic":
+        depths_folder=os.path.join(path, depths) if depths != "" else ""
 
-    #frame 읽기
-    train_transforms_path = os.path.join(path, "transforms_train.json")
-    with open(train_transforms_path, 'r', encoding='utf-8') as f:
-        train_data = json.load(f)
-    train_frames = train_data.get("frames", [])
-    
-    test_transforms_path = os.path.join(path, "transforms_test.json")
-    with open(test_transforms_path, 'r', encoding='utf-8') as f:
-        test_data = json.load(f)
-    test_frames = test_data.get("frames", [])
+        # nerf synthetic dataset
+        print("Reading nerf synthetic dataset")
+        train_transforms_path = os.path.join(path, "transforms_train.json")
+        with open(train_transforms_path, 'r', encoding='utf-8') as f:
+            train_data = json.load(f)
+        train_frames = train_data.get("frames", [])
+        
+        test_transforms_path = os.path.join(path, "transforms_test.json")
+        with open(test_transforms_path, 'r', encoding='utf-8') as f:
+            test_data = json.load(f)
+        test_frames = test_data.get("frames", [])
 
-    print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", depths_folder, white_background, False, extension)
-    print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", depths_folder, white_background, True, extension)
-    
+        print("Reading Training Transforms")
+        train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", depths_folder, white_background, False, extension)
+        print("Reading Test Transforms")
+        test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", depths_folder, white_background, True, extension)
+    elif dataset_type == "omniblender":
+        depths_folder=os.path.join(path, depths) if depths != "" else ""
+
+        # OmniBlender dataset
+        print("Reading OmniBlender dataset")
+        transforms_path = os.path.join(path, "transform.json")
+        with open(transforms_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        train_frames = [frame for frame in data["frames"] if int(frame["file_path"].split(".")[0]) % 4 == 0]
+        test_frames = [frame for frame in data["frames"] if int(frame["file_path"].split(".")[0]) % 4 == 2]
+
+        print("Reading Training Transforms in OmniBlender")
+        train_cam_infos = readCamerasFromTransforms(path, "transform.json", depths_folder, white_background, False, extension)
+        print("Reading Test Transforms in OmniBlender")
+        test_cam_infos = readCamerasFromTransforms(path, "transform.json", depths_folder, white_background, True, extension)
+
     if not eval:
-        train_cam_infos.extend(test_cam_infos)
-        test_cam_infos = []
+       train_cam_infos.extend(test_cam_infos)
+       test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 

@@ -12,6 +12,9 @@
 import os
 import random
 import json
+import sys
+sys.path.append('C:/Users/Hayun Oh/research/shape-aware-GS-processor/gaussian_splatting')
+
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel

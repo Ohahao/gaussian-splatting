@@ -18,7 +18,7 @@ import json
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
-from simple_knn._C import distCUDA2
+#from submodules.simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
@@ -26,6 +26,29 @@ try:
     from diff_gaussian_rasterization import SparseGaussianAdam
 except:
     pass
+
+#distCUDA2 대신 사용(두 점 사이 거리 계산)
+def compute_distances(points):
+    """
+    Compute pairwise distances between points using PyTorch.
+
+    Parameters:
+        points (torch.Tensor): A tensor of shape (N, 3), where N is the number of points.
+
+    Returns:
+        torch.Tensor: A tensor of shape (N, N) containing pairwise distances.
+    """
+    # Ensure points are on the same device (e.g., GPU)
+    points = points.to(torch.float32)
+    
+    # Compute pairwise squared distances
+    diff = points.unsqueeze(1) - points.unsqueeze(0)  # Shape: (N, N, 3)
+    dist_squared = torch.sum(diff ** 2, dim=-1)       # Shape: (N, N)
+    
+    # Compute distances
+    distances = torch.sqrt(torch.clamp(dist_squared, min=1e-7))  # Avoid sqrt(0)
+    return distances
+
 
 class GaussianModel:
 
@@ -147,7 +170,9 @@ class GaussianModel:
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
-            
+
+
+
     #Point Cloud(input)에서 초기 3D Gaussian 생성
     def create_from_pcd(self, pcd : BasicPointCloud, cam_infos : int, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -160,7 +185,7 @@ class GaussianModel:
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
         #거리 기반 scale 및 회전 초기화
-        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
+        dist2 = torch.clamp_min(compute_distances(fused_point_cloud), 1e-7)    #fused_point_cloud: point cloud 3D 좌표
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
